@@ -21,6 +21,14 @@ NAME_RE = re.compile('^[a-zA-Z]\w*$')
 ROOT_NAME = 'Root'
 
 
+class GraphInfo(object):
+
+    def __init__(self, graph, mutations_graph=None):
+        self.nodes_map = OrderedDict(chain(((n.name, n) for n in graph.nodes),
+                                           ((ROOT_NAME, graph.root),)))
+        self.mutations_graph=mutations_graph
+
+
 class TypeIdent(TypeVisitor):
 
     def visit_sequence(self, obj):
@@ -46,39 +54,33 @@ def not_implemented(*args, **kwargs):
     raise NotImplementedError
 
 
-def na_maybe(graph):
+def na_maybe(graph_info):
     return Nothing
 
 
-def na_many(graph, ids=None, options=None):
+def na_many(graph_info, ids=None, options=None):
     if ids is None:
         return []
     else:
         return [[] for _ in ids]
 
 
-def _nodes_map(graph):
-    return OrderedDict(chain(((n.name, n) for n in graph.nodes),
-                             ((ROOT_NAME, graph.root),)))
-
-
-def type_link(graph, options):
+def type_link(graph_info, options):
     name = options['name']
-    if name in _nodes_map(graph):
+    if name in graph_info.nodes_map:
         return name
     else:
         return Nothing
 
 
-def types_link(graph):
-    return [n for n in _nodes_map(graph) if NAME_RE.match(n)]
+def types_link(graph_info):
+    return [n for n in graph_info.nodes_map if NAME_RE.match(n)]
 
 
-def type_info(graph, fields, ids):
-    nodes_map = _nodes_map(graph)
+def type_info(graph_info, fields, ids):
     for ident in ids:
-        if ident in nodes_map:
-            node = nodes_map[ident]
+        if ident in graph_info.nodes_map:
+            node = graph_info.nodes_map[ident]
             info = {'id': ident,
                     'kind': 'OBJECT',
                     'name': ident,
@@ -97,10 +99,9 @@ def type_info(graph, fields, ids):
         yield [info.get(f.name) for f in fields]
 
 
-def type_fields_link(graph, ids, options):
-    nodes_map = _nodes_map(graph)
+def type_fields_link(graph_info, ids, options):
     for ident in ids:
-        node = nodes_map[ident]
+        node = graph_info.nodes_map[ident]
         field_idents = [FieldIdent(ident, f.name) for f in node.fields
                         if NAME_RE.match(f.name) and f.type is not None]
         if not field_idents:
@@ -110,7 +111,7 @@ def type_fields_link(graph, ids, options):
         yield field_idents
 
 
-def type_of_type_link(graph, ids):
+def type_of_type_link(graph_info, ids):
     for ident in ids:
         if isinstance(ident, (NON_NULL, LIST)):
             yield ident.of_type
@@ -118,10 +119,9 @@ def type_of_type_link(graph, ids):
             yield Nothing
 
 
-def field_info(graph, fields, ids):
-    nodes_map = _nodes_map(graph)
+def field_info(graph_info, fields, ids):
     for ident in ids:
-        node = nodes_map[ident.node]
+        node = graph_info.nodes_map[ident.node]
         field = node.fields_map[ident.name]
         info = {'id': ident,
                 'name': field.name,
@@ -131,29 +131,26 @@ def field_info(graph, fields, ids):
         yield [info[f.name] for f in fields]
 
 
-def field_type_link(graph, ids):
-    nodes_map = _nodes_map(graph)
+def field_type_link(graph_info, ids):
     type_ident = TypeIdent()
     for ident in ids:
-        node = nodes_map[ident.node]
+        node = graph_info.nodes_map[ident.node]
         field = node.fields_map[ident.name]
         yield type_ident.visit(field.type)
 
 
-def field_args_link(graph, ids):
-    nodes_map = _nodes_map(graph)
+def field_args_link(graph_info, ids):
     for ident in ids:
-        node = nodes_map[ident.node]
+        node = graph_info.nodes_map[ident.node]
         field = node.fields_map[ident.name]
         yield [ArgumentIdent(ident.node, field.name, option.name)
                for option in field.options
                if NAME_RE.match(option.name) and option.type is not None]
 
 
-def input_value_info(graph, fields, ids):
-    nodes_map = _nodes_map(graph)
+def input_value_info(graph_info, fields, ids):
     for ident in ids:
-        node = nodes_map[ident.node]
+        node = graph_info.nodes_map[ident.node]
         field = node.fields_map[ident.field]
         option = field.options_map[ident.name]
         info = {'id': ident,
@@ -164,11 +161,10 @@ def input_value_info(graph, fields, ids):
         yield [info[f.name] for f in fields]
 
 
-def input_value_type_link(graph, ids):
-    nodes_map = _nodes_map(graph)
+def input_value_type_link(graph_info, ids):
     type_ident = TypeIdent()
     for ident in ids:
-        node = nodes_map[ident.node]
+        node = graph_info.nodes_map[ident.node]
         field = node.fields_map[ident.field]
         option = field.options_map[ident.name]
         yield type_ident.visit(option.type)
@@ -259,17 +255,17 @@ GRAPH = Graph([
 
 class BindToGraph(GraphTransformer):
 
-    def __init__(self, graph):
-        self.graph = graph
+    def __init__(self, graph_info):
+        self.graph_info = graph_info
 
     def visit_field(self, obj):
         field = super(BindToGraph, self).visit_field(obj)
-        field.func = partial(field.func, self.graph)
+        field.func = partial(field.func, self.graph_info)
         return field
 
     def visit_link(self, obj):
         link = super(BindToGraph, self).visit_link(obj)
-        link.func = partial(link.func, self.graph)
+        link.func = partial(link.func, self.graph_info)
         return link
 
 
@@ -314,12 +310,16 @@ class AddIntrospection(GraphTransformer):
 
 class GraphQLIntrospection(GraphTransformer):
 
+    def __init__(self, mutations_graph=None):
+        self.mutations_graph = mutations_graph
+
     def __type_name__(self, node_name):
         return Field('__typename', String,
                      partial(type_name_field_func, node_name))
 
     def __introspection_graph__(self, graph):
-        return BindToGraph(graph).visit(GRAPH)
+        graph_info = GraphInfo(graph, mutations_graph=self.mutations_graph)
+        return BindToGraph(graph_info).visit(GRAPH)
 
     def visit_node(self, obj):
         node = super(GraphQLIntrospection, self).visit_node(obj)
