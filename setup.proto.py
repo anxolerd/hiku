@@ -1,9 +1,9 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='hiku',
-    version='0.4.0',
-    description='Library to implement Graph APIs',
+    name='hiku_proto',
+    version='0.1.0',
+    description='Protobufs for Hiku project',
     author='Vladimir Magamedov',
     author_email='vladimir@magamedov.com',
     url='https://github.com/vmagamedov/hiku',
@@ -11,10 +11,10 @@ setup(
     namespace_packages=['hiku'],
     include_package_data=True,
     license='BSD',
-    install_requires=[],
+    install_requires=['protobuf'],
     entry_points={
         'protobuf_proto': [
-            'hiku=hiku',
+            'hiku=hiku_proto',
         ]
     },
 )
